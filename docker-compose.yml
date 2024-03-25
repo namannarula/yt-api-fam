@@ -11,5 +11,5 @@ services:
       yt_api_key_3: ${yt_api_key_3}
       FLASK_APP: app.py
       FLASK_ENV: production
-      command: gunicorn --workers 3 --bind 0.0.0.0:5001 main:main --log-level=debug --access-logfile - --error-logfile -
+      command: gunicorn --workers 3 --bind 0.0.0.0:5001 app:app --log-level=debug --access-logfile - --error-logfile -
       restart: always
