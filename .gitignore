@@ -2,3 +2,4 @@
 /venv
 /.idea/.gitignore
 /.env
+/instance/videos.db
