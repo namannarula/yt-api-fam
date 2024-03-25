@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5001:5001"
+    environment:
+      yt_api_key_1: ${yt_api_key_1}
+      yt_api_key_2: ${yt_api_key_2}
+      yt_api_key_3: ${yt_api_key_3}
+      FLASK_APP: app.py
+      FLASK_ENV: production
+      command: gunicorn --workers 3 --bind 0.0.0.0:5001 main:main --log-level=debug --access-logfile - --error-logfile -
+      restart: always
