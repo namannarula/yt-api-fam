@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
+from googleapiclient.errors import HttpError
+
 
 load_dotenv()
 
@@ -13,44 +16,67 @@ db = SQLAlchemy(app)
 
 class Video(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    youtube_id = db.Column(db.String(100), unique=True, nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=False)
     publish_datetime = db.Column(db.DateTime, nullable=False)
     thumbnail_default = db.Column(db.String(200), nullable=False)
-
     def __repr__(self):
         return f'<Video {self.title}>'
 
 with app.app_context():
     db.create_all()
 
-yt_api_key = os.getenv("yt_api_key_1")
+api_keys = [os.getenv("yt_api_key_1"), os.getenv("yt_api_key_2"), os.getenv("yt_api_key_3")]
+api_keys = [key for key in api_keys if key]
 
 search_query = 'macbook pro m3 review'
 
-youtube = build('youtube', 'v3', developerKey=yt_api_key)
+def fetch_latest_videos(app):
+    global current_key_index
 
-def fetch_latest_videos():
-    request = youtube.search().list(
-        part='snippet',
-        maxResults=50,
-        order='date',
-        type='video',
-        q=search_query
-    )
-    response = request.execute()
-
-    for search_result in response.get('items', []):
-        if search_result['id']['kind'] == 'youtube#video':
-            video = Video(
-                title=search_result['snippet']['title'],
-                description=search_result['snippet']['description'],
-                publish_datetime=datetime.datetime.strptime(search_result['snippet']['publishedAt'], '%Y-%m-%dT%H:%M:%SZ'),
-                thumbnail_default=search_result['snippet']['thumbnails']['default']['url'],
+    with app.app_context():
+        try:
+            youtube = build('youtube', 'v3', developerKey=api_keys[current_key_index])
+            request = youtube.search().list(
+                part='snippet',
+                maxResults=50,
+                order='date',
+                type='video',
+                q=search_query
             )
-            db.session.add(video)
+            response = request.execute()
 
-    db.session.commit()
+            for search_result in response.get('items', []):
+                if search_result['id']['kind'] == 'youtube#video':
+                    video_id = search_result['id']['videoId']
+                    existing_video = Video.query.filter_by(youtube_id=video_id).first()
+                    if existing_video is None:
+                        video = Video(
+                            youtube_id=video_id,
+                            title=search_result['snippet']['title'],
+                            description=search_result['snippet']['description'],
+                            publish_datetime=datetime.datetime.strptime(search_result['snippet']['publishedAt'], '%Y-%m-%dT%H:%M:%SZ'),
+                            thumbnail_default=search_result['snippet']['thumbnails']['default']['url']
+                        )
+                        db.session.add(video)
+
+            db.session.commit()
+
+        except HttpError as e:
+            print(f'An HTTP error occurred: {e}')
+
+            current_key_index = (current_key_index + 1) % len(api_keys)
+            print(f'Switched to API key: {api_keys[current_key_index]}')
+
+            fetch_latest_videos(app)
+
+def start_scheduler(app):
+    global current_key_index
+    current_key_index = 0
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(fetch_latest_videos, 'interval', minutes=1, args=[app])
+    scheduler.start()
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
@@ -117,6 +143,6 @@ def search_videos():
 
 if __name__ == '__main__':
     with app.app_context():
-        fetch_latest_videos()
+        start_scheduler(app)
 
     app.run(debug=True, port=5001)
