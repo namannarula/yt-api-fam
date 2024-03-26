@@ -6,6 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from googleapiclient.errors import HttpError
+import time
 
 
 load_dotenv()
@@ -30,14 +31,28 @@ with app.app_context():
 api_keys = [os.getenv("yt_api_key_1"), os.getenv("yt_api_key_2"), os.getenv("yt_api_key_3")]
 api_keys = [key for key in api_keys if key]
 
+
+class APIKeyManager:
+    def __init__(self, api_keys, cooldown_period=6 * 60 * 60):
+        self.api_keys = api_keys
+        self.cooldown_period = cooldown_period
+        self.disabled_keys = {}
+    def get_next_key(self):
+        available_keys = [key for key in self.api_keys if key not in self.disabled_keys or self.disabled_keys[key] < time.time()]
+        if not available_keys:
+            raise Exception("No API keys available")
+        return available_keys[0]
+
+    def disable_key(self, key):
+        self.disabled_keys[key] = time.time() + self.cooldown_period
+
 search_query = 'macbook pro m3 review'
 
-def fetch_latest_videos(app):
-    global current_key_index
-
+def fetch_latest_videos(app, api_key_manager):
     with app.app_context():
         try:
-            youtube = build('youtube', 'v3', developerKey=api_keys[current_key_index])
+            key = api_key_manager.get_next_key()
+            youtube = build('youtube', 'v3', developerKey=key)
             request = youtube.search().list(
                 part='snippet',
                 maxResults=50,
@@ -65,17 +80,17 @@ def fetch_latest_videos(app):
 
         except HttpError as e:
             print(f'An HTTP error occurred: {e}')
+            api_key_manager.disable_key(key)
+            key = api_key_manager.get_next_key()
+            youtube = build('youtube', 'v3', developerKey=key)
 
-            current_key_index = (current_key_index + 1) % len(api_keys)
-            print(f'Switched to API key: {api_keys[current_key_index]}')
 
-            fetch_latest_videos(app)
-
+api_key_manager = APIKeyManager(api_keys)
 def start_scheduler(app):
-    global current_key_index
-    current_key_index = 0
+    global api_key_manager
     scheduler = BackgroundScheduler()
-    scheduler.add_job(fetch_latest_videos, 'interval', minutes=1, args=[app])
+
+    scheduler.add_job(fetch_latest_videos, 'interval', minutes=1, args=[app, api_key_manager])
     scheduler.start()
 
 @app.route('/videos', methods=['GET'])
