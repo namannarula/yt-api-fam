@@ -7,13 +7,25 @@ import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from googleapiclient.errors import HttpError
 import time
-
+from flask_caching import Cache
+import redis
 
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///videos.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://user:password@postgres:5432/database_name'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_QUERY_CACHE_OPTIONS'] = {'timeout': 300}
+redis_client = redis.Redis(host='redis', port=6379, db=0)
 db = SQLAlchemy(app)
+cache = Cache(app, config={
+    'CACHE_TYPE': 'redis',
+    'CACHE_REDIS_HOST': 'redis',
+    'CACHE_REDIS_PORT': 6379,
+    'CACHE_REDIS_DB': 0,
+    'CACHE_DEFAULT_TIMEOUT': 300
+})
+
 
 class Video(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -48,6 +60,7 @@ class APIKeyManager:
 
 search_query = 'macbook pro m3 review'
 
+@cache.memoize(timeout=300)
 def fetch_latest_videos(app, api_key_manager):
     with app.app_context():
         try:
@@ -97,9 +110,8 @@ def start_scheduler(app):
 def get_videos():
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 10))
-
-    videos = Video.query.order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
-
+    videos = Video.query.options(cache.cache_key('all_videos'),
+                                 cache.cache_timeout(3600)).order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
     video_list = []
     for video in videos.items:
         video_data = {
