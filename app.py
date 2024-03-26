@@ -114,11 +114,17 @@ def search_videos():
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 10))
 
-    videos = Video.query.filter(
-        db.or_(
-            Video.title.ilike(f'%{query}%'),
-            Video.description.ilike(f'%{query}%')
+    query_words = query.split()
+    search_conditions = []
+    for word in query_words:
+        word_condition = db.or_(
+            Video.title.ilike(f'%{word}%'),
+            Video.description.ilike(f'%{word}%')
         )
+        search_conditions.append(word_condition)
+
+    videos = Video.query.filter(
+        db.and_(*search_conditions)
     ).order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
 
     video_list = []
