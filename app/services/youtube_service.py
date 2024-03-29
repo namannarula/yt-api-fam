@@ -1,13 +1,13 @@
 from googleapiclient.discovery import build
 from app.models.video_model import Video
-from app import db
-import os
+from app import db, redis_client
 import datetime
 from googleapiclient.errors import HttpError
 
+
 def fetch_latest_videos(app, api_key_manager, search_query):
     with app.app_context():
-        print("video fetch start")
+        print("Fetching videos from YT")
         try:
             key = api_key_manager.get_next_key()
             youtube = build('youtube', 'v3', developerKey=key)
@@ -20,7 +20,6 @@ def fetch_latest_videos(app, api_key_manager, search_query):
                 q=search_query
             )
             response = request.execute()
-            print(response)
 
             for search_result in response.get('items', []):
                 if search_result['id']['kind'] == 'youtube#video':
@@ -37,6 +36,7 @@ def fetch_latest_videos(app, api_key_manager, search_query):
                         db.session.add(video)
 
             db.session.commit()
+            redis_client.delete(f'latest_videos:{search_query}')
 
         except HttpError as e:
             print(f'An HTTP error occurred: {e}')
