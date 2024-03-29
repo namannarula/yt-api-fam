@@ -51,6 +51,14 @@ Searches for videos based on the title and description.
 **Example:**
 GET /api/search?q=macbook+unboxing&per_page=15
 
+### API Test
+```YAML
+Duration: 60 sec 
+Rate: 100 req/sec
+```
+***Results***
+<img src="api-testing/vegeta-plot.png">
+
 ## Known Issues
 - Load balancing needs to be added / horizontal scalability needs to be added.
 - Once the application has run, it will take 10 seconds to fetch the first result via the API
