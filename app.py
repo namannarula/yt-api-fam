@@ -85,7 +85,11 @@ def fetch_latest_videos(app, api_key_manager):
                         db.session.add(video)
 
             db.session.commit()
-            # skill issue
+
+            cache_keys_to_delete = [f'latest_videos:{search_query}:{page}' for page in range(1, Video.query.order_by(Video.publish_datetime.desc()).paginate().pages + 1)]
+            page_count_cache_key = f'latest_videos_page_count'
+            redis_client.delete(*cache_keys_to_delete)
+            redis_client.delete(page_count_cache_key)
 
         except HttpError as e:
             print(f'An HTTP error occurred: {e}')
@@ -93,39 +97,22 @@ def fetch_latest_videos(app, api_key_manager):
             key = api_key_manager.get_next_key()
             youtube = build('youtube', 'v3', developerKey=key)
 
-
 api_key_manager = APIKeyManager(api_keys)
 def start_scheduler(app):
     global api_key_manager
     scheduler = BackgroundScheduler()
 
-    scheduler.add_job(fetch_latest_videos, 'interval', seconds=10, args=[app, api_key_manager])
+    scheduler.add_job(fetch_latest_videos, 'interval', seconds=60, args=[app, api_key_manager])
     scheduler.start()
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 10))
-    print("i actually changed shit")
     cache_key = f'latest_videos:{search_query}:{page}'
     page_count_cache_key = f'latest_videos_page_count'
-    cached_videos = redis_client.get(cache_key)
-    print(f"page num -> {page}")
-    if cached_videos:
 
-        print("Cached videos now")
-        cached_videos = json.loads(cached_videos)
-        video_list = cached_videos
-        total_pages = int(count) if (count:=redis_client.get(page_count_cache_key)) is not None else 1
-        print(f"total pages -> {total_pages}")
-        videos = {
-            'videos': video_list,
-            'total_pages': total_pages,
-            'current_page': page
-        }
-        return jsonify(videos)
-    else:
-        print("Getting from database")
+    if redis_client.get(cache_key) is None or redis_client.get(page_count_cache_key) is None:
         videos = Video.query.order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
 
         video_list = []
@@ -140,17 +127,27 @@ def get_videos():
             }
             video_list.append(video_data)
 
+        redis_client.set(cache_key, json.dumps(video_list), ex=300)
+        redis_client.set(page_count_cache_key, str(videos.pages), ex=300)
+
         response = {
             'videos': video_list,
             'total_pages': videos.pages,
             'current_page': page
         }
-
-        redis_client.set(cache_key, json.dumps(video_list), ex=60)
-        redis_client.set(page_count_cache_key, str(videos.pages), ex=60)
-
         return jsonify(response)
 
+    cached_videos = redis_client.get(cache_key)
+    if cached_videos:
+        cached_videos = json.loads(cached_videos)
+        video_list = cached_videos
+        total_pages = int(redis_client.get(page_count_cache_key))
+        videos = {
+            'videos': video_list,
+            'total_pages': total_pages,
+            'current_page': page
+        }
+        return jsonify(videos)
 @app.route('/search', methods=['GET'])
 def search_videos():
     query = request.args.get('q', '').strip()
