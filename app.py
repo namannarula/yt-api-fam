@@ -87,9 +87,7 @@ def fetch_latest_videos(app, api_key_manager):
             db.session.commit()
 
             cache_keys_to_delete = [f'latest_videos:{search_query}:{page}' for page in range(1, Video.query.order_by(Video.publish_datetime.desc()).paginate().pages + 1)]
-            page_count_cache_key = f'latest_videos_page_count'
             redis_client.delete(*cache_keys_to_delete)
-            redis_client.delete(page_count_cache_key)
 
         except HttpError as e:
             print(f'An HTTP error occurred: {e}')
@@ -107,17 +105,24 @@ def start_scheduler(app):
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
-    page = int(request.args.get('page', 1))
+    cursor = request.args.get('cursor', None)
     per_page = int(request.args.get('per_page', 10))
-    cache_key = f'latest_videos:{search_query}:{page}'
-    page_count_cache_key = f'latest_videos_page_count'
+    cache_key = f'latest_videos:{search_query}:{cursor or ""}'
 
-    if redis_client.get(cache_key) is None or redis_client.get(page_count_cache_key) is None:
-        videos = Video.query.order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
+    if redis_client.get(cache_key) is None:
+        query = Video.query.order_by(Video.created_at.desc())
 
-        video_list = []
-        for video in videos.items:
-            video_data = {
+        if cursor:
+            last_video = Video.query.filter_by(id=cursor).first()
+            if last_video:
+                query = query.filter(Video.created_at < last_video.created_at)
+
+        videos = query.limit(per_page + 1).all()
+
+        has_next_page = len(videos) > per_page
+        video_list = [
+            {
+                'id': video.id,
                 'title': video.title,
                 'description': video.description,
                 'publish_datetime': video.publish_datetime.isoformat(),
@@ -125,36 +130,31 @@ def get_videos():
                     'default': video.thumbnail_default
                 }
             }
-            video_list.append(video_data)
+            for video in videos[:per_page]
+        ]
 
-        redis_client.set(cache_key, json.dumps(video_list), ex=300)
-        redis_client.set(page_count_cache_key, str(videos.pages), ex=300)
+        next_cursor = videos[-1].id if has_next_page else None
 
         response = {
             'videos': video_list,
-            'total_pages': videos.pages,
-            'current_page': page
+            'next_cursor': next_cursor
         }
+
+        redis_client.set(cache_key, json.dumps(response), ex=60)
+
         return jsonify(response)
 
-    cached_videos = redis_client.get(cache_key)
-    if cached_videos:
-        cached_videos = json.loads(cached_videos)
-        video_list = cached_videos
-        total_pages = int(redis_client.get(page_count_cache_key))
-        videos = {
-            'videos': video_list,
-            'total_pages': total_pages,
-            'current_page': page
-        }
-        return jsonify(videos)
+    cached_response = redis_client.get(cache_key)
+    if cached_response:
+        cached_response = json.loads(cached_response)
+        return jsonify(cached_response)
 @app.route('/search', methods=['GET'])
 def search_videos():
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({'error': 'Search query is required.'}), 400
 
-    page = int(request.args.get('page', 1))
+    cursor = request.args.get('cursor', None)
     per_page = int(request.args.get('per_page', 10))
 
     query_words = query.split()
@@ -166,13 +166,21 @@ def search_videos():
         )
         search_conditions.append(word_condition)
 
-    videos = Video.query.filter(
+    query = Video.query.filter(
         db.and_(*search_conditions)
-    ).order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
+    ).order_by(Video.publish_datetime.desc())
 
-    video_list = []
-    for video in videos.items:
-        video_data = {
+    if cursor:
+        last_video = Video.query.filter_by(id=cursor).first()
+        if last_video:
+            query = query.filter(Video.publish_datetime < last_video.publish_datetime)
+
+    videos = query.limit(per_page + 1).all()
+
+    has_next_page = len(videos) > per_page
+    video_list = [
+        {
+            'id': video.id,
             'title': video.title,
             'description': video.description,
             'publish_datetime': video.publish_datetime.isoformat(),
@@ -180,12 +188,14 @@ def search_videos():
                 'default': video.thumbnail_default
             }
         }
-        video_list.append(video_data)
+        for video in videos[:per_page]
+    ]
+
+    next_cursor = videos[-1].id if has_next_page else None
 
     response = {
         'videos': video_list,
-        'total_pages': videos.pages,
-        'current_page': page
+        'next_cursor': next_cursor
     }
 
     return jsonify(response)
