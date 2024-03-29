@@ -59,8 +59,7 @@ Rate: 100 req/sec
 ***Results***
 <img src="api-testing/vegeta-plot.png">
 
-## Known Issues
+## Optimisations to be done
 - Load balancing needs to be added / horizontal scalability needs to be added.
 - Once the application has run, it will take 10 seconds to fetch the first result via the API
 - No caching on /search
-- 
