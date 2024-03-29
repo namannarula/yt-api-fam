@@ -61,5 +61,5 @@ Rate: 100 req/sec
 
 ## Optimisations to be done
 - Load balancing needs to be added / horizontal scalability needs to be added.
-- Once the application has run, it will take 10 seconds to fetch the first result via the API
-- No caching on /search
+- Once the application has run, it will take 10 seconds to fetch the first result via the API - this can be improved
+- Caching to be added on on /search
