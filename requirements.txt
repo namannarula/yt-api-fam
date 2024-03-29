@@ -8,4 +8,4 @@ gunicorn
 flask_caching
 redis
 psycopg2-binary
-
+marshmallow
