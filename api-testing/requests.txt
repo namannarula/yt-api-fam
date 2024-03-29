@@ -1,0 +1,5 @@
+GET http://localhost:5001/api/videos
+GET http://localhost:5001/api/videos?per_page=20
+
+GET http://localhost:5001/api/search?q=macbook+unboxing
+
