@@ -5,3 +5,7 @@ requests==2.31.0
 flask_sqlalchemy
 apscheduler
 gunicorn
+flask_caching
+redis
+psycopg2-binary
+

@@ -20,6 +20,7 @@ COPY . /app/
 
 # Create and switch to a new user
 RUN useradd -m myuser
+RUN chown -R myuser:myuser /app
 USER myuser
 
 # Run Gunicorn

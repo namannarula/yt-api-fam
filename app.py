@@ -7,35 +7,29 @@ import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from googleapiclient.errors import HttpError
 import time
-from flask_caching import Cache
 import redis
+from sqlalchemy import Column, Integer, String, Text, DateTime
+import json
 
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://user:password@postgres:5432/database_name'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_QUERY_CACHE_OPTIONS'] = {'timeout': 300}
-redis_client = redis.Redis(host='redis', port=6379, db=0)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 db = SQLAlchemy(app)
-cache = Cache(app, config={
-    'CACHE_TYPE': 'redis',
-    'CACHE_REDIS_HOST': 'redis',
-    'CACHE_REDIS_PORT': 6379,
-    'CACHE_REDIS_DB': 0,
-    'CACHE_DEFAULT_TIMEOUT': 300
-})
 
+redis_client = redis.Redis(host='redis', port=6379, db=0)
 
 class Video(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    youtube_id = db.Column(db.String(100), unique=True, nullable=False)
-    title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text, nullable=False)
-    publish_datetime = db.Column(db.DateTime, nullable=False)
-    thumbnail_default = db.Column(db.String(200), nullable=False)
-    def __repr__(self):
-        return f'<Video {self.title}>'
+    id = Column(Integer, primary_key=True)
+    youtube_id = Column(String(100), unique=True, nullable=False)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=False)
+    publish_datetime = Column(DateTime, nullable=False)
+    thumbnail_default = Column(String(200), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+def __repr__(self):
+    return f'<Video {self.title}>'
 
 with app.app_context():
     db.create_all()
@@ -60,7 +54,7 @@ class APIKeyManager:
 
 search_query = 'macbook pro m3 review'
 
-@cache.memoize(timeout=300)
+
 def fetch_latest_videos(app, api_key_manager):
     with app.app_context():
         try:
@@ -71,6 +65,7 @@ def fetch_latest_videos(app, api_key_manager):
                 maxResults=50,
                 order='date',
                 type='video',
+                publishedAfter='2023-01-01T00:00:00Z',
                 q=search_query
             )
             response = request.execute()
@@ -90,6 +85,7 @@ def fetch_latest_videos(app, api_key_manager):
                         db.session.add(video)
 
             db.session.commit()
+            # skill issue
 
         except HttpError as e:
             print(f'An HTTP error occurred: {e}')
@@ -103,34 +99,57 @@ def start_scheduler(app):
     global api_key_manager
     scheduler = BackgroundScheduler()
 
-    scheduler.add_job(fetch_latest_videos, 'interval', minutes=1, args=[app, api_key_manager])
+    scheduler.add_job(fetch_latest_videos, 'interval', seconds=10, args=[app, api_key_manager])
     scheduler.start()
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 10))
-    videos = Video.query.options(cache.cache_key('all_videos'),
-                                 cache.cache_timeout(3600)).order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
-    video_list = []
-    for video in videos.items:
-        video_data = {
-            'title': video.title,
-            'description': video.description,
-            'publish_datetime': video.publish_datetime.isoformat(),
-            'thumbnails': {
-                'default': video.thumbnail_default
-            }
+    print("i actually changed shit")
+    cache_key = f'latest_videos:{search_query}:{page}'
+    page_count_cache_key = f'latest_videos_page_count'
+    cached_videos = redis_client.get(cache_key)
+    print(f"page num -> {page}")
+    if cached_videos:
+
+        print("Cached videos now")
+        cached_videos = json.loads(cached_videos)
+        video_list = cached_videos
+        total_pages = int(count) if (count:=redis_client.get(page_count_cache_key)) is not None else 1
+        print(f"total pages -> {total_pages}")
+        videos = {
+            'videos': video_list,
+            'total_pages': total_pages,
+            'current_page': page
         }
-        video_list.append(video_data)
+        return jsonify(videos)
+    else:
+        print("Getting from database")
+        videos = Video.query.order_by(Video.publish_datetime.desc()).paginate(page=page, per_page=per_page)
 
-    response = {
-        'videos': video_list,
-        'total_pages': videos.pages,
-        'current_page': page
-    }
+        video_list = []
+        for video in videos.items:
+            video_data = {
+                'title': video.title,
+                'description': video.description,
+                'publish_datetime': video.publish_datetime.isoformat(),
+                'thumbnails': {
+                    'default': video.thumbnail_default
+                }
+            }
+            video_list.append(video_data)
 
-    return jsonify(response)
+        response = {
+            'videos': video_list,
+            'total_pages': videos.pages,
+            'current_page': page
+        }
+
+        redis_client.set(cache_key, json.dumps(video_list), ex=60)
+        redis_client.set(page_count_cache_key, str(videos.pages), ex=60)
+
+        return jsonify(response)
 
 @app.route('/search', methods=['GET'])
 def search_videos():
@@ -174,8 +193,6 @@ def search_videos():
 
     return jsonify(response)
 
-if __name__ == '__main__':
+if __name__ == 'app':
     with app.app_context():
         start_scheduler(app)
-
-    app.run(debug=True, port=5001)

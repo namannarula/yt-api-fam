@@ -14,8 +14,12 @@ services:
     depends_on:
       - postgres
       - redis
-    command: gunicorn --workers 3 --bind 0.0.0.0:5001 app:app --log-level=debug --access-logfile - --error-logfile -
     restart: always
+    networks:
+      - main
+    volumes:
+      - .:/app
+
 
   postgres:
     image: postgres:12
@@ -25,9 +29,16 @@ services:
       POSTGRES_DB: database_name
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks:
+      - main
 
   redis:
     image: redis:latest
+    networks:
+      - main
 
 volumes:
   postgres-data:
+
+networks:
+  main:
