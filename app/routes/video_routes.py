@@ -1,12 +1,11 @@
 from flask import Blueprint, jsonify, request
 from app.models.video_model import Video
-from app import db
+from app import db, redis_client
 import redis
 import json
 
 bp = Blueprint('video_routes', __name__)
 
-redis_client = redis.Redis(host='redis', port=6379, db=0)
 search_query = 'macbook pro m3 review'
 
 @bp.route('/videos', methods=['GET'])
