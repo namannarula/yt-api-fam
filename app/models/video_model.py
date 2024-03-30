@@ -10,5 +10,9 @@ class Video(db.Model):
     thumbnail_default = db.Column(db.String(200), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
 
+    __table_args__ = (
+        db.Index('ix_video_publish_datetime', 'publish_datetime'),
+    )
+
     def __repr__(self):
         return f'<Video {self.title}>'
